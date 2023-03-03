@@ -77,7 +77,7 @@ public abstract class AbstractQueuedSynchronizer
 
         // 将本节点上的线程的status取消设置，singal方法中使用
         final int getAndUnsetStatus(int v) { // for signalling
-            //获取值，并将现在的status设置为status按位与~v
+            // 获取值，并将现在的status设置为status按位与~v
             return U.getAndBitwiseAndInt(this, STATUS, ~v);
         }
 
@@ -129,7 +129,6 @@ public abstract class AbstractQueuedSynchronizer
             return status <= 1 || Thread.currentThread().isInterrupted();
         }
 
-
         public final boolean block() {
             while (!isReleasable())
                 LockSupport.park();
@@ -150,18 +149,18 @@ public abstract class AbstractQueuedSynchronizer
         // 唤醒方法
         // singal和singnalAll的核心方法，他会唤醒一个或多个waiter（all参数代表唤醒一个还是多个），将其放入同步队列
         private void doSignal(ConditionNode first, boolean all) {
-            while(first!=null){
-                ConditionNode next=first.nextWaiter;
-                if((firstWaiter=next)==null){
-                    lastWaiter=null;
+            while (first != null) {
+                ConditionNode next = first.nextWaiter;
+                if ((firstWaiter = next) == null) {
+                    lastWaiter = null;
                 }
-                if((first.getAndUnsetStatus(COND)&COND)!=0){
+                if ((first.getAndUnsetStatus(COND) & COND) != 0) {
                     enqueue(first);
-                    if(!all){
+                    if (!all) {
                         break;
                     }
                 }
-                first=next;
+                first = next;
             }
         }
 
@@ -209,7 +208,7 @@ public abstract class AbstractQueuedSynchronizer
         private boolean canReacquire(ConditionNode node) {
             // 检查链接，而不是status，避免入队race
             // 只有在node不为null，并且node没有前驱（是第一个节点才有权利acquire）并且已经进入sync队列，才是可acquire的
-            return node!=null&&node.prev!=null&&isEnqueued(node);
+            return node != null && node.prev != null && isEnqueued(node);
         }
 
         // 清理condition队列，去掉给定的node和非waiting位的node
@@ -241,41 +240,41 @@ public abstract class AbstractQueuedSynchronizer
             int saveState = enableWait(node);
             LockSupport.setCurrentBlocker(this);
             boolean interrupted = false, cancelled = false, rejected = false;
-            //当不满足重新acquire的条件时
-            while(!canReacquire(node)){
-                //首先检查线程当前中断是否置位
-                if(interrupted|=Thread.interrupted()){
-                    //不是运行状态
-                    if(cancelled=(node.getAndUnsetStatus(COND)&COND)!=0){
+            // 当不满足重新acquire的条件时
+            while (!canReacquire(node)) {
+                // 首先检查线程当前中断是否置位
+                if (interrupted |= Thread.interrupted()) {
+                    // 不是运行状态
+                    if (cancelled = (node.getAndUnsetStatus(COND) & COND) != 0) {
                         break;
                     }
-                }else if((node.status & COND) !=0){
-                    try{
-                        if (rejected){
+                } else if ((node.status & COND) != 0) {
+                    try {
+                        if (rejected) {
                             node.block();
-                        }else{
+                        } else {
                             ForkJoinPool.managedBlock(node);
                         }
-                    }catch(RejectedExecutionException ex){
-                        rejected=true;
-                    }catch(InterruptedException ie){
-                        interrupted=true;
+                    } catch (RejectedExecutionException ex) {
+                        rejected = true;
+                    } catch (InterruptedException ie) {
+                        interrupted = true;
                     }
                 }
             }
 
-            //退出了循环，就是unpark完成，或者是中断置位了
+            // 退出了循环，就是unpark完成，或者是中断置位了
             LockSupport.setCurrentBlocker(null);
             node.clearStatus();
-            //为了确保线程处理中断置位后的事情，还是要抢锁
+            // 为了确保线程处理中断置位后的事情，还是要抢锁
             acquire(node, savedState, false, false, false, 0L);
-            if(interrupted){
-                if(cancelled){
+            if (interrupted) {
+                if (cancelled) {
                     unlinkCancelledWaiters(node);
                 }
                 Thread.currentThread().interrupt();
             }
-            
+
         }
 
         // 可中断且有时间限制
@@ -357,18 +356,20 @@ public abstract class AbstractQueuedSynchronizer
     final void enqueue(Node node) {
         // 从队尾入队
         if (node != null) {
-            Node t = tail;
-            node.setPrevRelaxed(t);
-            if (t == null) {
-                tryInitializeHead();
-            } else if (casTail(t, node)) {
-                // 如果入队成功,连接好队列
-                t.next = node;
-                // 这时如果t作为node的前驱cacelled被置位，那么node节点应该得到执行
-                if (t.status < 0) {
-                    LockSupport.unpark(node.waiter);
+            for (;;) {
+                Node t = tail;
+                node.setPrevRelaxed(t);
+                if (t == null) {
+                    tryInitializeHead();
+                } else if (casTail(t, node)) {
+                    // 如果入队成功,连接好队列
+                    t.next = node;
+                    // 这时如果t作为node的前驱cacelled被置位，那么node节点应该得到执行
+                    if (t.status < 0) {
+                        LockSupport.unpark(node.waiter);
+                    }
+                    break;
                 }
-                break;
             }
         }
     }
@@ -500,9 +501,13 @@ public abstract class AbstractQueuedSynchronizer
                 // 如果这时tail是null，说明队列为初始状态，应该初始化
                 if (t == null) {
                     tryInitializeHead();
-                } else if (!casTail(t, node)) {
+                } 
+                //如果入队未成功应该断开与队列的链接
+                else if (!casTail(t, node)) {
                     node.setPrevRelaxed(null);
-                } else {
+                }
+                //如果入队成功则将队列拼接完整
+                 else {
                     t.next = node;
                 }
             }
@@ -510,9 +515,9 @@ public abstract class AbstractQueuedSynchronizer
             // --------------在这之后，有可能在队头的节点线程unpark之后再次抢锁失败
 
             // 如果被unpark之后，此时有一个线程来抢锁，导致它再次抢锁失败则执行自旋，并且再次将status改为阻塞态
-            else if (first && spin != 0) {
+            else if (first && spins != 0) {
                 --spins;
-                // !TODO()为什么这样做会增加公平性 PS:如果没有这个自旋，就会直接将状态位改为WAITING，
+                // 为什么这样做会增加公平性 PS:如果没有这个自旋，就会直接将状态位改为WAITING，
                 // 就不会在多次尝试获取锁，很快会陷入再次阻塞，这样新来的线程获取锁的机会就要比first节点的机会大，这可能会造成线程饥饿问题
                 // ！！！！也就是说，first阻塞的次数越多，他能重新尝试获取锁的机会就会越多，（有点像响应比调度算法）
                 Thread.onSpinWait(); // 如果再次抢锁失败，会自旋，为了减少再等待的不公平性
@@ -533,8 +538,10 @@ public abstract class AbstractQueuedSynchronizer
                 }
                 // 超时的park
                 else if ((nanos = time - System.nanoTime()) > 0L) {
-                    LockSupport.park(this, nano);
-                } else {
+                    LockSupport.park(this, nanos);
+                } 
+                //如果等待超时则应该是获取锁失败跳出循环
+                else {
                     break;
                 }
                 node.clearStatus();
@@ -544,7 +551,8 @@ public abstract class AbstractQueuedSynchronizer
                 }
             }
         }
-
+        //可以因为线程被中断或者park超时导致获取锁失败，这时要对node进行清理工作
+        return cancelAcquire(node, interrupted,interruptible);
     }
 
     // 可能从尾部开始，重复遍历，去除已经被cancel的节点，直到没有cancel的节点。unpark可能已经被重新连接的节点的标记，成为下一个回合的合格的能够竞争锁的人
