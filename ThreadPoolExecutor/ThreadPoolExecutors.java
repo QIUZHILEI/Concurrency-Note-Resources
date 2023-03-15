@@ -88,72 +88,45 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class ThreadPoolExecutor extends AbstractExecutorService {
     /**
-     * The main pool control state, ctl, is an atomic integer packing
-     * two conceptual fields
-     * workerCount, indicating the effective number of threads
-     * runState, indicating whether running, shutting down etc
-     *
-     * In order to pack them into one int, we limit workerCount to
-     * (2^29)-1 (about 500 million) threads rather than (2^31)-1 (2
-     * billion) otherwise representable. If this is ever an issue in
-     * the future, the variable can be changed to be an AtomicLong,
-     * and the shift/mask constants below adjusted. But until the need
-     * arises, this code is a bit faster and simpler using an int.
-     *
-     * The workerCount is the number of workers that have been
-     * permitted to start and not permitted to stop. The value may be
-     * transiently different from the actual number of live threads,
-     * for example when a ThreadFactory fails to create a thread when
-     * asked, and when exiting threads are still performing
-     * bookkeeping before terminating. The user-visible pool size is
-     * reported as the current size of the workers set.
-     *
-     * The runState provides the main lifecycle control, taking on values:
-     *
-     * RUNNING: Accept new tasks and process queued tasks
-     * SHUTDOWN: Don't accept new tasks, but process queued tasks
-     * STOP: Don't accept new tasks, don't process queued tasks,
-     * and interrupt in-progress tasks
-     * TIDYING: All tasks have terminated, workerCount is zero,
-     * the thread transitioning to state TIDYING
-     * will run the terminated() hook method
-     * TERMINATED: terminated() has completed
-     *
-     * The numerical order among these values matters, to allow
-     * ordered comparisons. The runState monotonically increases over
-     * time, but need not hit each state. The transitions are:
-     *
-     * RUNNING -> SHUTDOWN
-     * On invocation of shutdown()
-     * (RUNNING or SHUTDOWN) -> STOP
-     * On invocation of shutdownNow()
-     * SHUTDOWN -> TIDYING
-     * When both queue and pool are empty
-     * STOP -> TIDYING
-     * When pool is empty
-     * TIDYING -> TERMINATED
+     * ctl:主要的池控制状态，它是一个int型的原子值，表示线程的有效runState,
+     * 表示是否运行、关闭等。workerCount被限制在2^29-1（约为5亿）个线程，
+     * 如果在将来这将成为一个问题，就将其改为AtomicLong并调整下面的shift/mask。
+     * 
+     * WorkerCount是被允许启动和不允许启动的工作者的数量。这个值可能会暂时与实际活跃
+     * 的线程数不同。
+     * runState提供了主要的生命周期控制，采取的以下几种值：
+     * 1.RUNNING:接受新任务并且处理入队任务
+     * 2.SHUTDOWN:不接受新任务，但处理入队的任务
+     * 3.STOP:不接受新任务，不处理入队任务
+     * 4.TIDYING:所有的任务已经终止，workerCount为0，过渡到TIDYING状态的线程执行
+     * terminated方法
+     * 5.TERMINATED:terminated方法已经执行完成
+     * 为了便于比较，这些数字的顺序很重要。runState会随着时间的推移而单调递增：
+     * 在调用shutdown方法后：RUNNING -> SHUTDOWN
+     * 如果调用的是shutdownNow方法，则状态为：(RUNNING or SHUTDOWN) -> STOP
+     * 当池和队列都空，状态：SHUTDOWN -> TIDYING
+     * 当池为空，状态：STOP -> TIDYING
+     * 当terminated方法被调用完成后，状态：TIDYING -> TERMINATED
      * When the terminated() hook method has completed
      *
-     * Threads waiting in awaitTermination() will return when the
-     * state reaches TERMINATED.
+     * 等待在awaitTermination方法的线程将会在线程池状态变为TERMINATED后返回
      *
-     * Detecting the transition from SHUTDOWN to TIDYING is less
-     * straightforward than you'd like because the queue may become
-     * empty after non-empty and vice versa during SHUTDOWN state, but
-     * we can only terminate if, after seeing that it is empty, we see
-     * that workerCount is 0 (which sometimes entails a recheck -- see
-     * below).
+     * 检测从SHUTDOWN状态到TIDYING状态的转换不是那么的直接，因为在SHUTDOWN后
+     * 队列可能由非空变为空，但我们只有看到队列为空并且workerCount变为0时才可以终止
+     * （这时需要重新检查）
      */
-    private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
-    private static final int COUNT_BITS = Integer.SIZE - 3;
-    private static final int COUNT_MASK = (1 << COUNT_BITS) - 1;
 
-    // runState is stored in the high-order bits
-    private static final int RUNNING = -1 << COUNT_BITS;
-    private static final int SHUTDOWN = 0 << COUNT_BITS;
-    private static final int STOP = 1 << COUNT_BITS;
-    private static final int TIDYING = 2 << COUNT_BITS;
-    private static final int TERMINATED = 3 << COUNT_BITS;
+    // 表示有效的runState
+    private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
+    private static final int COUNT_BITS = Integer.SIZE - 3; // = 29
+    private static final int COUNT_MASK = (1 << COUNT_BITS) - 1; // = 536870911
+
+    // runState被存储在高位
+    private static final int RUNNING = -1 << COUNT_BITS; // = -536870912
+    private static final int SHUTDOWN = 0 << COUNT_BITS; // = 0
+    private static final int STOP = 1 << COUNT_BITS; // = 536870912
+    private static final int TIDYING = 2 << COUNT_BITS; // = 1073741824
+    private static final int TERMINATED = 3 << COUNT_BITS; // = 1610612736
 
     // Packing and unpacking ctl
     private static int runStateOf(int c) {
@@ -181,169 +154,79 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         return c >= s;
     }
 
+    //状态<SHUTDOWN 就是在运行
     private static boolean isRunning(int c) {
         return c < SHUTDOWN;
     }
 
-    /**
-     * Attempts to CAS-increment the workerCount field of ctl.
-     */
+    //worker数量+1
     private boolean compareAndIncrementWorkerCount(int expect) {
         return ctl.compareAndSet(expect, expect + 1);
     }
 
-    /**
-     * Attempts to CAS-decrement the workerCount field of ctl.
-     */
+    //worker数量-1
     private boolean compareAndDecrementWorkerCount(int expect) {
         return ctl.compareAndSet(expect, expect - 1);
     }
 
-    /**
-     * Decrements the workerCount field of ctl. This is called only on
-     * abrupt termination of a thread (see processWorkerExit). Other
-     * decrements are performed within getTask.
-     */
+    // 这个方法仅在一个线程突然终止执行时，其他的decrements是在getTask中进行
     private void decrementWorkerCount() {
         ctl.addAndGet(-1);
     }
 
-
-    //-------------------------------------------------------------
+    // -------------------------------------------------------------
     /**
-     * The queue used for holding tasks and handing off to worker
-     * threads. We do not require that workQueue.poll() returning
-     * null necessarily means that workQueue.isEmpty(), so rely
-     * solely on isEmpty to see if the queue is empty (which we must
-     * do for example when deciding whether to transition from
-     * SHUTDOWN to TIDYING). This accommodates special-purpose
-     * queues such as DelayQueues for which poll() is allowed to
-     * return null even if it may later return non-null when delays
-     * expire.
+     * 用来保存任务并移交给工作线程的队列。这个队列不要求poll方法返回null就
+     * 必然意味着队列为空，只依靠isEmpty方法来判断队列是否为空（例如：我们想
+     * 从SHUTDOWN过渡到TIDYING时必须这样做）。这种做法适用了特殊队列，比如
+     * 允许返回poll方法返回null的DelayQueue
      */
     private final BlockingQueue<Runnable> workQueue;
 
     /**
-     * Lock held on access to workers set and related bookkeeping.
-     * While we could use a concurrent set of some sort, it turns out
-     * to be generally preferable to use a lock. Among the reasons is
-     * that this serializes interruptIdleWorkers, which avoids
-     * unnecessary interrupt storms, especially during shutdown.
-     * Otherwise exiting threads would concurrently interrupt those
-     * that have not yet interrupted. It also simplifies some of the
-     * associated statistics bookkeeping of largestPoolSize etc. We
-     * also hold mainLock on shutdown and shutdownNow, for the sake of
-     * ensuring workers set is stable while separately checking
-     * permission to interrupt and actually interrupting.
+     * 对worker集合和相关属性的获取持有锁。虽然我们可以使用无锁并发Set，但事实证明
+     * 使用锁Set是比较好的。其中的原因是：这可以序列化interruptldleWorkers，从而
+     * 避免不必要的interrupt风暴，特别是在shutdown期间。使用并发集可能引起并发的
+     * 中断那些尚未中断的线程。这个锁也简化了一些统计方法的设计。
      */
     private final ReentrantLock mainLock = new ReentrantLock();
 
-    //存储线程池中工作的线程，可以在持有mainLock时获取这个数据结构
+    // 存储线程池中工作的线程，可以在持有mainLock时获取这个数据结构
     private final HashSet<Worker> workers = new HashSet<>();
 
-    /**
-     * Wait condition to support awaitTermination.
-     */
+    // 提供awaitTermination的阻塞操作
     private final Condition termination = mainLock.newCondition();
 
-    /**
-     * Tracks largest attained pool size. Accessed only under
-     * mainLock.
-     */
+    // 跟踪池内达到的最大线程数
     private int largestPoolSize;
 
-    /**
-     * Counter for completed tasks. Updated only on termination of
-     * worker threads. Accessed only under mainLock.
-     */
+    // 一个已完成任务的计数，它仅仅在工作线程终止的时候更新
     private long completedTaskCount;
 
-    /*
-     * All user control parameters are declared as volatiles so that
-     * ongoing actions are based on freshest values, but without need
-     * for locking, since no internal invariants depend on them
-     * changing synchronously with respect to other actions.
-     */
-
+    // threadFactory只需要是volatile的，因为只需要在外部更新它，而内部仅仅使用
     /**
-     * Factory for new threads. All threads are created using this
-     * factory (via method addWorker). All callers must be prepared
-     * for addWorker to fail, which may reflect a system or user's
-     * policy limiting the number of threads. Even though it is not
-     * treated as an error, failure to create threads may result in
-     * new tasks being rejected or existing ones remaining stuck in
-     * the queue.
-     *
-     * We go further and preserve pool invariants even in the face of
-     * errors such as OutOfMemoryError, that might be thrown while
-     * trying to create threads. Such errors are rather common due to
-     * the need to allocate a native stack in Thread.start, and users
-     * will want to perform clean pool shutdown to clean up. There
-     * will likely be enough memory available for the cleanup code to
-     * complete without encountering yet another OutOfMemoryError.
+     * 调用者要做好处理addWorkder异常/错误的准备，因为可能由于OS对最大线程数的限制。
+     * 尽管这不被视为一个错误，但是这种情况会导致新任务被拒绝或者队列中的任务卡住。
+     * 有可能在创建新线程时，会造成栈溢出，内存溢出错误，但是要保证池的稳定性，遇到
+     * 这样的错误，可以通过清理池，来获取更多的内存，这样创建新线程就不会内存溢出了。
      */
     private volatile ThreadFactory threadFactory;
 
-    /**
-     * Handler called when saturated or shutdown in execute.
-     */
+    // 拒绝策略，默认是拒绝执行
     private volatile RejectedExecutionHandler handler;
-
-    /**
-     * Timeout in nanoseconds for idle threads waiting for work.
-     * Threads use this timeout when there are more than corePoolSize
-     * present or if allowCoreThreadTimeOut. Otherwise they wait
-     * forever for new work.
-     */
-    private volatile long keepAliveTime;
-
-    /**
-     * If false (default), core threads stay alive even when idle.
-     * If true, core threads use keepAliveTime to time out waiting
-     * for work.
-     */
-    private volatile boolean allowCoreThreadTimeOut;
-
-    /**
-     * Core pool size is the minimum number of workers to keep alive
-     * (and not allow to time out etc) unless allowCoreThreadTimeOut
-     * is set, in which case the minimum is zero.
-     *
-     * Since the worker count is actually stored in COUNT_BITS bits,
-     * the effective limit is {@code corePoolSize & COUNT_MASK}.
-     */
-    private volatile int corePoolSize;
-
-    /**
-     * Maximum pool size.
-     *
-     * Since the worker count is actually stored in COUNT_BITS bits,
-     * the effective limit is {@code maximumPoolSize & COUNT_MASK}.
-     */
-    private volatile int maximumPoolSize;
     private static final RejectedExecutionHandler defaultHandler = new AbortPolicy();
 
-    /**
-     * Permission required for callers of shutdown and shutdownNow.
-     * We additionally require (see checkShutdownAccess) that callers
-     * have permission to actually interrupt threads in the worker set
-     * (as governed by Thread.interrupt, which relies on
-     * ThreadGroup.checkAccess, which in turn relies on
-     * SecurityManager.checkAccess). Shutdowns are attempted only if
-     * these checks pass.
-     *
-     * All actual invocations of Thread.interrupt (see
-     * interruptIdleWorkers and interruptWorkers) ignore
-     * SecurityExceptions, meaning that the attempted interrupts
-     * silently fail. In the case of shutdown, they should not fail
-     * unless the SecurityManager has inconsistent policies, sometimes
-     * allowing access to a thread and sometimes not. In such cases,
-     * failure to actually interrupt threads may disable or delay full
-     * termination. Other uses of interruptIdleWorkers are advisory,
-     * and failure to actually interrupt will merely delay response to
-     * configuration changes so is not handled exceptionally.
-     */
-    private static final RuntimePermission shutdownPerm = new RuntimePermission("modifyThread");
+    // 单位：纳秒，线程空闲时最长存活时间
+    private volatile long keepAliveTime;
+
+    // 默认是false，如果设置为true，则keepAliveTime对核心线程也奏效
+    private volatile boolean allowCoreThreadTimeOut;
+
+    // 核心池大小，实际上worker数量被存储在COUNT_BITS中，实际有效值为corePoolSize & COUNT_MASK
+    private volatile int corePoolSize;
+
+    // 最大池大小。实际上worker数量被存储在COUNT_BITS中，实际有效值为maximumPoolSize & COUNT_MASK
+    private volatile int maximumPoolSize;
 
     /**
      * Class Worker mainly maintains interrupt control state for
@@ -1267,7 +1150,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
 
     // 以下方法可以调整和获取线程池的一些重要配置信息----------------------------------
 
-    //配置ThreadFactory
+    // 配置ThreadFactory
     public void setThreadFactory(ThreadFactory threadFactory) {
         if (threadFactory == null)
             throw new NullPointerException();
@@ -1278,12 +1161,13 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         return threadFactory;
     }
 
-    //配置拒绝策略
+    // 配置拒绝策略
     public void setRejectedExecutionHandler(RejectedExecutionHandler handler) {
         if (handler == null)
             throw new NullPointerException();
         this.handler = handler;
     }
+
     public RejectedExecutionHandler getRejectedExecutionHandler() {
         return handler;
     }
@@ -1321,6 +1205,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
             }
         }
     }
+
     public int getCorePoolSize() {
         return corePoolSize;
     }
