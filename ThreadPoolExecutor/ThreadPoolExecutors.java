@@ -868,18 +868,8 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     }
 
     /**
-     * Sets the core number of threads. This overrides any value set
-     * in the constructor. If the new value is smaller than the
-     * current value, excess existing threads will be terminated when
-     * they next become idle. If larger, new threads will, if needed,
-     * be started to execute any queued tasks.
-     *
-     * @param corePoolSize the new core size
-     * @throws IllegalArgumentException if {@code corePoolSize < 0}
-     *                                  or {@code corePoolSize} is greater than the
-     *                                  {@linkplain
-     *                                  #getMaximumPoolSize() maximum pool size}
-     * @see #getCorePoolSize
+     * 设置corePoolSize，如果比原来的小，则需要终止一些多余的并且空闲的线程
+     * 如果比原来的大，并且如果需要，就启动新的线程运行任务
      */
     public void setCorePoolSize(int corePoolSize) {
         if (corePoolSize < 0 || maximumPoolSize < corePoolSize)
@@ -905,23 +895,13 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         return corePoolSize;
     }
 
-    /**
-     * Starts a core thread, causing it to idly wait for work. This
-     * overrides the default policy of starting core threads only when
-     * new tasks are executed. This method will return {@code false}
-     * if all core threads have already been started.
-     *
-     * @return {@code true} if a thread was started
-     */
+    //预先启动一个空闲的线程来等待任务
     public boolean prestartCoreThread() {
         return workerCountOf(ctl.get()) < corePoolSize &&
                 addWorker(null, true);
     }
 
-    /**
-     * Same as prestartCoreThread except arranges that at least one
-     * thread is started even if corePoolSize is 0.
-     */
+    //和prestartCoreThread方法一样，但是即使是corePoolSize为0，也会启动一个线程
     void ensurePrestart() {
         int wc = workerCountOf(ctl.get());
         if (wc < corePoolSize)
