@@ -116,12 +116,16 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * （这时需要重新检查）
      */
 
-    // 表示有效的runState
+    // 表示有效的runState，高3位代表状态，低29位代表线程池当前存活的线程数，ctl初始为RUNNING，可以+1，-1
     private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
     private static final int COUNT_BITS = Integer.SIZE - 3; // = 29
     private static final int COUNT_MASK = (1 << COUNT_BITS) - 1; // = 536870911
 
-    // runState被存储在高位
+    /*
+     * runState被存储在高位
+     * int有32位，低29位代表目前池内存活的线程数(被限制在5亿之内)，高三位代表线程池状态:
+     * 111(负数)代表RUNNING，000代表SHUTDOWN，001代表STOP，010代表TIDYING，011代表TERMINATED
+     */
     private static final int RUNNING = -1 << COUNT_BITS; // = -536870912
     private static final int SHUTDOWN = 0 << COUNT_BITS; // = 0
     private static final int STOP = 1 << COUNT_BITS; // = 536870912
@@ -129,22 +133,23 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     private static final int TERMINATED = 3 << COUNT_BITS; // = 1610612736
 
     // Packing and unpacking ctl
+
+    // ~COUNT_MASK高三位为111，因此任何数的高三位和它相与都是数字本身，这个方法可以用来判断状态
     private static int runStateOf(int c) {
         return c & ~COUNT_MASK;
     }
 
+    // MASK低29位都为1 所以和任何其他数相与低29位就等于任何数，这个方法用来统计线程池内当前线程数
     private static int workerCountOf(int c) {
         return c & COUNT_MASK;
     }
 
+    // 设置ctl，rs代表状态 高三位，wc代表线程池内存活线程数，高三位取rs低29位取wc，组成ctl
     private static int ctlOf(int rs, int wc) {
         return rs | wc;
     }
 
-    /*
-     * Bit field accessors that don't require unpacking ctl.
-     * These depend on the bit layout and on workerCount being never negative.
-     */
+    // 因为runState的状态从线程池执行开始到执行结束的状态使递增的，下面的方法可以利用这种顺序做出状态的判断
 
     private static boolean runStateLessThan(int c, int s) {
         return c < s;
@@ -806,7 +811,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         return runStateAtLeast(ctl.get(), SHUTDOWN);
     }
 
-    //ScheduledThreadPoolExecutor 使用
+    // ScheduledThreadPoolExecutor 使用
     boolean isStopped() {
         return runStateAtLeast(ctl.get(), STOP);
     }
@@ -825,7 +830,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         return runStateAtLeast(ctl.get(), TERMINATED);
     }
 
-    //见AbstractExecutorService
+    // 见AbstractExecutorService
     public boolean awaitTermination(long timeout, TimeUnit unit)
             throws InterruptedException {
         long nanos = unit.toNanos(timeout);
@@ -895,13 +900,13 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         return corePoolSize;
     }
 
-    //预先启动一个空闲的线程来等待任务
+    // 预先启动一个空闲的线程来等待任务
     public boolean prestartCoreThread() {
         return workerCountOf(ctl.get()) < corePoolSize &&
                 addWorker(null, true);
     }
 
-    //和prestartCoreThread方法一样，但是即使是corePoolSize为0，也会启动一个线程
+    // 和prestartCoreThread方法一样，但是即使是corePoolSize为0，也会启动一个线程
     void ensurePrestart() {
         int wc = workerCountOf(ctl.get());
         if (wc < corePoolSize)
