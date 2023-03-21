@@ -175,3 +175,12 @@ public interface ExecutorService extends Executor {
 ## ThreadPoolExecutors核心
 
 ​	参见ThreadPoolExecutors.java
+
+### 核心方法
+
+- tryTerminated
+- interruptIdleWorkers
+- addWorker
+- getTask
+- runWorker
+- execute(submit方法也会调用这个方法)
