@@ -406,7 +406,7 @@ public abstract class AbstractQueuedSynchronizer
 
     // !! acquire的主方法:
     /*
-     * node:空，除非是重新获得的Condition
+     * node:如果是Condition条件队列里传递过来的node，则他可能有前驱节点并且不为null
      * arg:参数
      * shared:是否是共享模式
      * interruptible:是否可中断
@@ -430,7 +430,7 @@ public abstract class AbstractQueuedSynchronizer
         Thread current = Thread.currentThread();
         byte spins = 0, postSpins = 0; // 当第一个线程unpark时尝试
         boolean interrupted = false, first = false;
-        Node pred = null; // node进队后的前驱节点
+        Node pred = null; // node进队后的前驱节点（主要用于标记Condition队列里传递过来的节点）
 
         for (;;) {
             /*
@@ -484,7 +484,7 @@ public abstract class AbstractQueuedSynchronizer
                     return 1;
                 }
             }
-            // 如果node还没有被创建（这是新的竞争锁的线程）
+            // 抢锁失败，如果node还没有被创建（这是新的竞争锁的线程）
             if (node == null) {
                 if (shared) {
                     node = new SharedNode();
@@ -516,19 +516,23 @@ public abstract class AbstractQueuedSynchronizer
 
             /*
              * 共享状体起作用：
-             * 在非公平的抢锁情况下，如果被首个节点代表的线程A被unpark之后，此时有一个线程B来抢锁，可能导致它再次抢锁失败，
-             * 虽然共享状态是允许再次被抢锁，但是抢锁的一瞬间是互斥的，如果这个线程A抢共享锁失败，不应该
-             * 很快的陷入阻塞状态，为了避免这种情况，这里的设计就是让线程A先自旋，然后重试抢锁，而且万一
-             * 自旋后也抢锁失败，并再次陷入阻塞，那么线程A会被B调用signalNextIfShared释放，可以再次抢锁
-             * (如果B先调用unpark(A)，A后调用park，A是不会被阻塞的，这就是LockSupport的优点)，
-             * 但是每次阻塞都会使线程A被要求自旋的次数增加，这样线程A抢锁的次数就会增多，那么它抢锁成功的概率
-             * 就会随阻塞次数而大大增加(有点像响应比调度)
+             * 在非公平的抢锁情况下，如果被首个节点代表的线程A被unpark之后，线程只是进入了RUNNABLE状态，
+             * 线程可能没有被系统调度进入执行状态（从RUNNABLE到RUNNING是需要一点时间的），此时如果有一
+             * 个线程B来抢锁，这个线程A抢锁的成功几率是很小的，虽然共享状态是允许再次被抢锁，但是抢锁的
+             * 一瞬间是互斥的，如果这个线程A抢共享锁失败，不应该很快的陷入阻塞状态，为了避免这种情况，
+             * 这里的设计就是让线程A先自旋，然后重试抢锁，而且万一自旋后也抢锁失败，并再次陷入阻塞，
+             * 那么线程A会被B调用signalNextIfShared释放，可以再次抢锁(如果B先调用unpark(A)，A后
+             * 调用park，A是不会被阻塞的，这就是LockSupport的优点)，但是每次阻塞都会使线程A被要求自
+             * 旋的次数增加，这样线程A抢锁的次数就会增多，那么它抢锁成功的概率就会随阻塞次数而大大增加(有点像响应比调度)
              */ 
             else if (first && spins != 0) {
                 --spins;
                 Thread.onSpinWait();
             }
-            // 到这里说明node节点的线程抢锁失败且已经入队，那么应该将node的status置位为WAITING
+            /*
+             * 到这一步已经入队，但是可能这时锁被释放，如果没有这个分支判断，直接进入阻塞状态，可能错过了能够直接抢锁的机会，
+             * 而这一步就会使线程重新试一遍抢锁，可以避免错过成功抢锁的机会。
+             */
             else if (node.status == 0) {
                 node.status = WAITING;
             }
